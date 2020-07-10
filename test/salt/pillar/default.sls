@@ -11,75 +11,27 @@ postfix:
       smtp:
         # Limit to no more than 10 smtp processes
         maxproc: 10
-      # Enable oldstyle TLS wrapped SMTP
+      # Disable oldstyle TLS wrapped SMTP
       smtps:
-        enable: true
+        enable: false
       # Enable submission service on port 587/tcp with custom options
       submission:
         enable: true
         args:
           - "-o smtpd_tls_security_level=encrypt"
           - "-o smtpd_sasl_auth_enable=yes"
-          - "-o smtpd_client_restrictions: permit_sasl_authenticated,reject"
+          - "-o smtpd_client_restrictions=permit_sasl_authenticated,reject"
       tlsproxy:
         enable: true
         chroot: true
-      uucp:
-        enable: true
-      # Dovecot delivery via deliver binary. For better performance, investigate
-      # using LMTP instead: <https://wiki.dovecot.org/LMTP>
-      dovecot:
-        chroot: false
-        command: pipe
-        enable: true
-        extras: '-d ${recipient}'
-        flags: DRhu
-        type: unix
-        unpriv: false
-        user: vmail:vmail
-        argv: /usr/lib/dovecot/deliver
-      # Completely customized mail-delivery-agent entry. Will be appended to the
-      # master.cf file
-      custom-mda:
-        argv: /usr/local/sbin/mail-handler.py
-        command: pipe
-        extras: --rcpt ${recipient}
-        flags: DRhu
-        user: mail
-        # Wrap the output in master.cf at 78 chars for better readability
-        wrap: true
-        # Avoid user and arvg settings to allow define internal processes
-        # needed for randomizing relay IP (randmap functionality)
-        no_args: true
 
     # Backwards compatible definition of dovecot delivery in master.cf
     enable_dovecot: false
-    # The following are the default values:
-    dovecot:
-      user: vmail
-      group: vmail
-      flags: DRhu
-      argv: "/usr/lib/dovecot/deliver"
-
     # Backwards compatible definition of submission listener in master.cf
     enable_submission: false
-    # To replace the defaults use this:
-    submission:
-      smtpd_tls_security_level: encrypt
-      smtpd_sasl_auth_enable: 'yes'
-      smtpd_client_restrictions: permit_sasl_authenticated,reject
 
   enable_service: true
   reload_service: true
-
-  postgrey:
-    enabled: true
-    enable_service: true
-    location: inet:172.16.0.5:6379
-
-  policyd-spf:
-    enabled: true
-    time_limit: 7200s
 
   config:
     smtpd_banner: $myhostname ESMTP $mail_name
@@ -93,14 +45,9 @@ postfix:
     mynetworks: 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
     mailbox_size_limit: 0
     recipient_delimiter: +
-    inet_interfaces: all
+    # using all has problems in centos with ipv6
+    inet_interfaces: 127.0.0.1
     inet_protocols: all
-
-    # postsrsd:
-    sender_canonical_maps: tcp:127.0.0.1:10001
-    sender_canonical_classes: envelope_sender
-    recipient_canonical_maps: tcp:127.0.0.1:10002
-    recipient_canonical_classes: envelope_recipient
 
     # Alias
     alias_maps: hash:/etc/aliases
@@ -109,20 +56,8 @@ postfix:
     # Only local hash/btree/dbm files:
     alias_database: hash:/etc/aliases
 
-    # Virtual users
-    virtual_alias_maps: proxy:mysql:/etc/postfix/virtual_alias_maps.cf
-    virtual_mailbox_domains: proxy:mysql:/etc/postfix/virtual_mailbox_domains.cf
-    virtual_mailbox_maps: proxy:mysql:/etc/postfix/virtual_mailbox_maps.cf
-    virtual_mailbox_base: /home/vmail
-    virtual_mailbox_limit: 512000000
-    virtual_minimum_uid: 5000
-    virtual_transport: virtual
-    virtual_uid_maps: static:5000
-    virtual_gid_maps: static:5000
-
     local_transport: virtual
     local_recipient_maps: $virtual_mailbox_maps
-    # Use the `mapping` key to define the map
     transport_maps: hash:/etc/postfix/transport
 
     # SMTP server
@@ -164,27 +99,6 @@ postfix:
     relay_recipient_maps: hash:/etc/postfix/relay_domains
     virtual_alias_maps: hash:/etc/postfix/virtual
 
-  vmail:
-    user: postfix_user
-    password: DB_PASSWD
-    hosts: DB_HOST
-    dbname: postfix_db
-
-  # add mysql query to virtual
-  mysql:
-    virtual_mailbox_domains:
-      table: virtual_domains
-      select_field: 1
-      where_field: name
-    virtual_alias_maps:
-      table: virtual_aliases
-      select_field: destination
-      where_field: email
-    virtual_mailbox_maps:
-      table: virtual_users
-      select_field: 1
-      where_field: email
-
   aliases:
     # manage single aliases
     # this uses the aliases file defined in the minion config, /etc/aliases by default
@@ -193,12 +107,6 @@ postfix:
       root: info@example.com
     absent:
       - root
-
-    # manage entire aliases file
-    use_file: true
-    content: |
-      # Forward all local *nix users mail to our admins (via greedy regexp)
-      /.+/    admins@example.com
 
   certificates:
     server-cert:
@@ -229,9 +137,9 @@ postfix:
 
   mapping:
     transport_maps:
-      - DOMAIN_NAME: ':[IP_ADDRESS]'
+      - example.com: '10.1.1.1'
 
-    smpt_tls_policy_maps:
+    smtp_tls_policy_maps:
       - example.com: encrypt
       - .example.com: encrypt
 
@@ -250,24 +158,3 @@ postfix:
           - someuser_1@example.com
           - someuser_2@example.com
       - singlealiasexample: someuser_3@example.com
-
-
-###
-#
-# Multiple virtual_alias_maps entries:
-#
-# You are free to define alternative mapping names
-# and use them as 'variables' in your Postfix config:
-# (Credit for the idea and the example goes to @roskens.)
-
-postfix:
-  config:
-    virtual_alias_maps: $virtual_alias_1_maps $virtual_alias_2_maps
-    virtual_alias_1_maps: hash:/etc/postfix/virtual
-    virtual_alias_2_maps: pcre:/etc/postfix/virtual.pcre
-  mapping:
-    virtual_alias_1_maps:
-      root:
-        - me
-    virtual_alias_2_maps:
-      - '/(\S+)_(devel|preprod|prod)@sub.example.com$/': '$(1)@$(2).sub.example.com'
